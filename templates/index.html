@@ -2,60 +2,76 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Hexagon Tile Game</title>
-    <style>
-        body {
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            height: 100vh;
-            margin: 0;
-            font-family: Arial, sans-serif;
-            background-color: #f0f0f0;
-        }
-        #board {
-            display: grid;
-            grid-template-columns: repeat(10, 60px);
-            grid-template-rows: repeat(10, 52px);
-            gap: 2px;
-        }
-        .hex {
-            width: 60px;
-            height: 52px;
-            background-color: lightgray;
-            clip-path: polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%);
-            transition: background-color 0.2s;
-        }
-    </style>
+    <title>Treasure Hunt</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
 </head>
 <body>
+    <h1>Treasure Hunt</h1>
 
-<div id="board">
-    <!-- Hexagonal tiles will be added here on clicks -->
-</div>
+    <div class="game-container">
+        <!-- Game Board Grid -->
+        <div class="board">
+            {% for row in row_range %}
+                <div class="row">
+                    {% for col in col_range %}
+                        {% set player1_pos = game_state['player1']['position'] %}
+                        {% set player2_pos = game_state['player2']['position'] %}
+                        
+                        <div class="tile" data-x="{{ row }}" data-y="{{ col }}">
+                            {% if (row, col) == player1_pos %}
+                                <div class="player player1">P1</div>
+                            {% elif (row, col) == player2_pos %}
+                                <div class="player player2">P2</div>
+                            {% endif %}
+                        </div>
+                    {% endfor %}
+                </div>
+            {% endfor %}
+        </div>
 
-<script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
-<script>
-    $(document).ready(function() {
-        // Create an empty board of hex tiles
-        for (let i = 0; i < 100; i++) {
-            const hexTile = $('<div class="hex"></div>');
-            hexTile.data("clicked", false);  // Track if a tile has been clicked
-            $('#board').append(hexTile);
-        }
+        <!-- Sidebar Info -->
+        <div class="sidebar">
+            <h2>Player 1</h2>
+            <p id="player1-info">
+                Location: {{ game_state['player1']['position'] }} | Treasures: {{ game_state['player1']['treasures'] }}
+            </p>
 
-        // Add color to hex tiles on click
-        $('#board').on('click', '.hex', function() {
-            if (!$(this).data("clicked")) {  // Only allow one click per tile
-                $.getJSON('/add_tile', function(data) {
-                    $(this).css('background-color', data.color);
-                    $(this).data("clicked", true);  // Mark as clicked
-                }.bind(this));
-            }
+            <h2>Player 2</h2>
+            <p id="player2-info">
+                Location: {{ game_state['player2']['position'] }} | Treasures: {{ game_state['player2']['treasures'] }}
+            </p>
+        </div>
+    </div>
+
+    <!-- Bottom Controls -->
+    <div class="controls">
+        <p id="message">{{ game_state['message'] }}</p>
+        <form action="/search" method="post" style="display:inline;">
+            <button type="submit" id="search-btn">SEARCH</button>
+        </form>
+        <form action="/end_turn" method="post" style="display:inline;">
+            <button type="submit" id="end-turn-btn">END TURN</button>
+        </form>
+    </div>
+
+    <!-- JavaScript for handling tile clicks -->
+    <script>
+    document.querySelectorAll('.tile').forEach(tile => {
+        tile.addEventListener('click', () => {
+            const x = tile.getAttribute('data-x');
+            const y = tile.getAttribute('data-y');
+
+            fetch('/move', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ x: parseInt(x), y: parseInt(y) })
+            }).then(() => {
+                window.location.reload();
+            });
         });
     });
-</script>
-
+    </script>
 </body>
 </html>

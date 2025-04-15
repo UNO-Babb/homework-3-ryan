@@ -1,0 +1,14 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+      {
+        "name": "Run Flask App (debugpy)",
+        "type": "debugpy",
+        "request": "launch",
+        "program": "${workspaceFolder}/BoardGame.py",
+        "console": "integratedTerminal",
+        "justMyCode": true
+      }
+    ]
+  }
+  
