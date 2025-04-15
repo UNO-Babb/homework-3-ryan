@@ -1,9 +1,45 @@
 from flask import Flask, render_template, request, redirect, url_for, jsonify
-import random
+import random, json, os
 
 app = Flask(__name__)
 
-# Game state
+# ───────────────────────────────────────────────────────── helpers ──────────
+def save_event(msg: str) -> None:
+    with open("events.txt", "a") as f:
+        f.write(msg + "\n")
+
+def dump_state() -> None:
+    """Write game_state and item_map to game_state.json (tuple keys → str)."""
+    gs = dict(game_state)
+    gs["revealed"] = {str(k): v for k, v in game_state["revealed"].items()}
+    im = {str(k): v for k, v in item_map.items()}
+    with open("game_state.json", "w") as f:
+        json.dump({"game_state": gs, "item_map": im}, f)
+
+def load_state() -> bool:
+    if not os.path.exists("game_state.json"):
+        return False
+    with open("game_state.json") as f:
+        payload = json.load(f)
+
+    loaded = payload["game_state"]
+    for p in ("player1", "player2"):
+        loaded[p]["position"] = tuple(loaded[p]["position"])
+    loaded["revealed"] = {
+        tuple(map(int, k.strip("()").split(","))): v
+        for k, v in loaded["revealed"].items()
+    }
+    game_state.clear()
+    game_state.update(loaded)
+
+    item_map.clear()
+    for k, v in payload["item_map"].items():
+        x, y = k.strip("()").split(",")
+        item_map[(int(x), int(y))] = v
+    return True
+# ────────────────────────────────────────────────────────────────────────────
+
+# default fresh state
 game_state = {
     "turn": "Player1",
     "player1": {"position": (0, 0), "treasures": 0},
@@ -12,13 +48,10 @@ game_state = {
     "has_moved": False,
     "revealed": {},
     "winner": None,
-    "skip_turns": {"player1": False, "player2": False}
+    "skip_turns": {"player1": False, "player2": False},
 }
-
-# Item map populated at game start
 item_map = {}
 
-# 10x10 terrain map
 tile_map = [
     ['.', '.', '.', '.', '.', '.', '~', '.', '.', '.'],
     ['.', '.', '.', '.', '.', '.', '=', '.', '.', '.'],
@@ -34,170 +67,122 @@ tile_map = [
 
 def generate_items():
     global item_map
-    item_map = {}
-    grass_tiles = [(r, c) for r in range(10) for c in range(10) if tile_map[r][c] == '.']
-    item_positions = random.sample(grass_tiles, 6 + 6 + 3)
-    treasures = item_positions[:6]
-    traps = item_positions[6:12]
-    monsters = item_positions[12:]
+    grass = [(r, c) for r in range(10) for c in range(10) if tile_map[r][c] == '.']
+    picks = random.sample(grass, 6 + 6 + 3)
+    item_map = {p: 'Treasure' for p in picks[:6]}
+    item_map.update({p: 'Trap' for p in picks[6:12]})
+    item_map.update({p: 'Monster' for p in picks[12:]})
 
-    for pos in treasures:
-        item_map[pos] = 'Treasure'
-    for pos in traps:
-        item_map[pos] = 'Trap'
-    for pos in monsters:
-        item_map[pos] = 'Monster'
-
-# Save events to events.txt
-def save_event(event):
-    with open('events.txt', 'a') as file:
-        file.write(f"{event}\n")
-
+# ───────────────────────────────────────────────────────── routes ───────────
 @app.route('/')
 def home():
-    return render_template(
-        'index.html',
-        game_state=game_state,
-        tile_map=tile_map,
-        row_range=range(10),
-        col_range=range(10)
-    )
+    return render_template("index.html", game_state=game_state,
+                           tile_map=tile_map, row_range=range(10), col_range=range(10))
 
 @app.route('/start')
 def start():
-    game_state["turn"] = "Player1"
-    game_state["player1"] = {"position": (0, 0), "treasures": 0}
-    game_state["player2"] = {"position": (9, 9), "treasures": 0}
-    game_state["message"] = "Game has started! Player1 goes first."
-    game_state["has_moved"] = False
-    game_state["revealed"] = {}
-    game_state["winner"] = None
-    game_state["skip_turns"] = {"player1": False, "player2": False}
-    generate_items()
-
-    # Log game start
+    restart_state()
     save_event("Game started!")
-
+    dump_state()
     return redirect(url_for('home'))
+
+@app.route('/restart')
+def restart():
+    restart_state()
+    save_event("Game restarted!")
+    dump_state()
+    return redirect(url_for('home'))
+
+@app.route('/load')
+def load():
+    if load_state():
+        game_state["message"] = "Saved game loaded!"
+    else:
+        game_state["message"] = "No saved game found."
+    return redirect(url_for('home'))
+
+# ───────────────────────────── game actions ────────────────────────────────
+@app.route('/move', methods=['POST'])
+def move():
+    if game_state.get("winner"):
+        return jsonify(success=False)
+    x, y = request.get_json().values()
+    pk = game_state["turn"].lower()
+    if game_state["has_moved"]:
+        return jsonify(success=False)
+    cx, cy = game_state[pk]["position"]
+    if abs(cx - x) + abs(cy - y) != 1 or tile_map[x][y] in ('~', '^'):
+        return jsonify(success=False)
+    game_state[pk]["position"] = (x, y)
+    game_state["has_moved"] = True
+    game_state["message"] = f"{game_state['turn']} moved to {(x, y)}"
+    save_event(game_state["message"])
+    dump_state()
+    return jsonify(success=True)
 
 @app.route('/search', methods=['POST'])
 def search():
     if game_state.get("winner"):
-        game_state["message"] = f"{game_state['winner']} already won the game!"
         return redirect(url_for('home'))
-
-    current_player = game_state["turn"]
-    player_key = current_player.lower()
-    position = game_state[player_key]["position"]
-
-    if position in game_state["revealed"]:
-        game_state["message"] = f"{current_player} already searched this tile."
+    cur = game_state["turn"]; pk = cur.lower(); pos = game_state[pk]["position"]
+    if pos in game_state["revealed"]:
         return redirect(url_for('home'))
-
-    game_state["revealed"][position] = True
-    item = item_map.get(position)
-
+    game_state["revealed"][pos] = True
+    item = item_map.get(pos)
     if item == 'Treasure':
-        game_state[player_key]["treasures"] += 1
-        event = f"{current_player} found a Treasure at {position}."
-        save_event(event)
-        if game_state[player_key]["treasures"] >= 3:
-            game_state["winner"] = current_player
-            game_state["message"] = f"🎉 {current_player} wins the game with 3 treasures!"
-        else:
-            game_state["message"] = f"{current_player} found a Treasure!"
+        game_state[pk]["treasures"] += 1
+        msg = f"{cur} found Treasure at {pos}"
+        if game_state[pk]["treasures"] >= 3:
+            game_state["winner"] = cur
+            msg = f"🎉 {cur} wins with 3 treasures!"
     elif item == 'Trap':
-        game_state["skip_turns"][player_key] = True
-        event = f"{current_player} triggered a Trap at {position}."
-        save_event(event)
-        game_state["message"] = f"{current_player} triggered a Trap! They'll lose their next turn!"
+        game_state["skip_turns"][pk] = True            # flag self
+        msg = f"{cur} triggered Trap and will lose next turn!"
     elif item == 'Monster':
-        game_state[player_key]["position"] = (0, 0) if current_player == "Player1" else (9, 9)
-        event = f"{current_player} encountered a Monster at {position}."
-        save_event(event)
-        game_state["message"] = f"{current_player} encountered a Monster and fled to start!"
+        game_state[pk]["position"] = (0, 0) if cur == "Player1" else (9, 9)
+        msg = f"{cur} encountered Monster at {pos}"
     else:
-        event = f"{current_player} found nothing at {position}."
-        save_event(event)
-        game_state["message"] = f"{current_player} found nothing."
-
+        msg = f"{cur} found nothing at {pos}"
+    game_state["message"] = msg
+    save_event(msg)
+    dump_state()
     return redirect(url_for('home'))
 
 @app.route('/end_turn', methods=['POST'])
 def end_turn():
     if game_state.get("winner"):
-        game_state["message"] = f"{game_state['winner']} already won the game!"
         return redirect(url_for('home'))
 
-    next_turn = "Player2" if game_state["turn"] == "Player1" else "Player1"
-    next_key = next_turn.lower()
-
-    if game_state["skip_turns"][next_key]:
-        game_state["skip_turns"][next_key] = False
-        game_state["message"] = f"{next_turn}'s turn was skipped due to a trap!"
-        print(f"[DEBUG] Skipped {next_turn}'s turn due to trap.")  # dev output
-        game_state["turn"] = "Player1" if next_turn == "Player2" else "Player2"
-        game_state["has_moved"] = False
-        return redirect(url_for('home'))  # Skip their turn and go to the next player
-
-    game_state["turn"] = next_turn
+    # advance to next player
+    game_state["turn"] = "Player2" if game_state["turn"] == "Player1" else "Player1"
     game_state["has_moved"] = False
-    game_state["message"] = f"{game_state['turn']}'s turn!"
+    pk = game_state["turn"].lower()
+
+    # check skip flag for the player whose turn is about to start
+    if game_state["skip_turns"][pk]:
+        game_state["skip_turns"][pk] = False
+        save_event(f"{game_state['turn']}'s turn skipped (trap).")
+        game_state["message"] = f"{game_state['turn']}'s turn was skipped due to a trap!"
+        # give turn to the other player
+        game_state["turn"] = "Player2" if game_state["turn"] == "Player1" else "Player1"
+        pk = game_state["turn"].lower()
+
+    game_state["message"] = f"{game_state['turn']}'s turn."
+    dump_state()
     return redirect(url_for('home'))
-
-@app.route('/move', methods=['POST'])
-def move():
-    if game_state.get("winner"):
-        game_state["message"] = f"{game_state['winner']} already won the game!"
-        return jsonify(success=False)
-
-    data = request.get_json()
-    x, y = data['x'], data['y']
-    current_player = game_state.get("turn")
-    player_key = current_player.lower()
-
-    if player_key not in game_state:
-        game_state["message"] = "Game not started. Please click Start Game."
-        return jsonify(success=False)
-
-    if game_state.get("has_moved"):
-        game_state["message"] = f"{current_player} has already moved this turn!"
-        return jsonify(success=False)
-
-    current_x, current_y = game_state[player_key]["position"]
-
-    if abs(current_x - x) + abs(current_y - y) != 1:
-        game_state["message"] = "Invalid move. You can only move one tile."
-        return jsonify(success=False)
-
-    terrain = tile_map[x][y]
-    if terrain in ['~', '^']:
-        game_state["message"] = f"{current_player} cannot move to that terrain!"
-        return jsonify(success=False)
-
-    game_state[player_key]["position"] = (x, y)
-    game_state["has_moved"] = True
-    game_state["message"] = f"{current_player} moved to ({x}, {y})"
-    return jsonify(success=True)
-
-@app.route('/restart')
-def restart():
-    # Reset the game state
-    game_state["turn"] = "Player1"
-    game_state["player1"] = {"position": (0, 0), "treasures": 0}
-    game_state["player2"] = {"position": (9, 9), "treasures": 0}
-    game_state["message"] = "Game has been restarted! Player1 goes first."
-    game_state["has_moved"] = False
-    game_state["revealed"] = {}
-    game_state["winner"] = None
-    game_state["skip_turns"] = {"player1": False, "player2": False}
-    
-    generate_items()  # Reset the item map (treasures, traps, monsters)
-    
-    # Log game restart
-    save_event("Game restarted!")
-
-    return redirect(url_for('home'))
+# ────────────────────────────────────────────────────────────────────────────
+def restart_state():
+    game_state.update({
+        "turn": "Player1",
+        "player1": {"position": (0, 0), "treasures": 0},
+        "player2": {"position": (9, 9), "treasures": 0},
+        "message": "Game reset – Player1 starts.",
+        "has_moved": False,
+        "revealed": {},
+        "winner": None,
+        "skip_turns": {"player1": False, "player2": False}
+    })
+    generate_items()
 
 if __name__ == '__main__':
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    app.run(host='0.0.0.0', port=5000, debug=True)
