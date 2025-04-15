@@ -8,16 +8,31 @@
 <body>
     <h1>Treasure Hunt</h1>
 
+    <form action="/start" method="get">
+        <button type="submit">Start Game</button>
+    </form>
+
     <div class="game-container">
-        <!-- Game Board Grid -->
         <div class="board">
             {% for row in row_range %}
                 <div class="row">
                     {% for col in col_range %}
+                        {% set terrain = tile_map[row][col] %}
+                        {% set terrain_class = '' %}
+                        {% if terrain == '.' %}
+                            {% set terrain_class = 'tile-grass' %}
+                        {% elif terrain == '~' %}
+                            {% set terrain_class = 'tile-water' %}
+                        {% elif terrain == '=' %}
+                            {% set terrain_class = 'tile-bridge' %}
+                        {% elif terrain == '^' %}
+                            {% set terrain_class = 'tile-mountain' %}
+                        {% endif %}
+
                         {% set player1_pos = game_state['player1']['position'] %}
                         {% set player2_pos = game_state['player2']['position'] %}
-                        
-                        <div class="tile" data-x="{{ row }}" data-y="{{ col }}">
+
+                        <div class="tile {{ terrain_class }}" data-x="{{ row }}" data-y="{{ col }}">
                             {% if (row, col) == player1_pos %}
                                 <div class="player player1">P1</div>
                             {% elif (row, col) == player2_pos %}
@@ -29,21 +44,17 @@
             {% endfor %}
         </div>
 
-        <!-- Sidebar Info -->
         <div class="sidebar">
             <h2>Player 1</h2>
-            <p id="player1-info">
-                Location: {{ game_state['player1']['position'] }} | Treasures: {{ game_state['player1']['treasures'] }}
-            </p>
+            <p>Location: {{ game_state['player1']['position'] }}<br>
+               Treasures: {{ game_state['player1']['treasures'] }}</p>
 
             <h2>Player 2</h2>
-            <p id="player2-info">
-                Location: {{ game_state['player2']['position'] }} | Treasures: {{ game_state['player2']['treasures'] }}
-            </p>
+            <p>Location: {{ game_state['player2']['position'] }}<br>
+               Treasures: {{ game_state['player2']['treasures'] }}</p>
         </div>
     </div>
 
-    <!-- Bottom Controls -->
     <div class="controls">
         <p id="message">{{ game_state['message'] }}</p>
         <form action="/search" method="post" style="display:inline;">
@@ -54,7 +65,6 @@
         </form>
     </div>
 
-    <!-- JavaScript for handling tile clicks -->
     <script>
     document.querySelectorAll('.tile').forEach(tile => {
         tile.addEventListener('click', () => {
